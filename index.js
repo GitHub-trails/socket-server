@@ -1,22 +1,28 @@
+const axios = require('axios');
 const app = require('express')();
 const httpServer = require('http').createServer(app);
 const io = require('socket.io')(httpServer, {
-  cors: {origin : '*'}
+  cors: { origin: '*' }
 });
 
 const port = 3000;
-
-// Object to store socket IDs with usernames
 const users = {};
+const SECRET_KEY = '0x4AAAAAAAghj6h-vtw17GhlXceuDAN9kHM';
 
 io.on('connection', (socket) => {
   console.log('a user connected');
 
-  // Listen for the 'setUsername' event to store the username
-  socket.on('setUsername', (username) => {
-    users[socket.id] = username;
+  socket.on('setUsername', async (data) => {
+    const { username, captchaResponse } = data;
 
-    // Notify all clients of the updated user list
+    // Validate captcha response
+    const isValidCaptcha = await validateCaptcha(captchaResponse);
+    if (!isValidCaptcha) {
+      socket.emit('error', 'Invalid captcha');
+      return;
+    }
+
+    users[socket.id] = username;
     io.emit('userList', users);
   });
 
@@ -24,23 +30,34 @@ io.on('connection', (socket) => {
     console.log(data);
     const { targetSocketId, message } = data;
 
-    // Send message to specific client
     if (targetSocketId && users[targetSocketId]) {
       io.to(targetSocketId).emit('message', `${users[socket.id]}: ${message}`);
     } else {
-      // If no targetSocketId is provided, broadcast to all clients
       io.emit('message', `${users[socket.id]}: ${message}`);
     }
   });
 
   socket.on('disconnect', () => {
     console.log('a user disconnected!');
-    // Remove the user's socket ID from the users object
     delete users[socket.id];
-
-    // Notify all clients of the updated user list
     io.emit('userList', users);
   });
 });
 
 httpServer.listen(port, () => console.log(`listening on port ${port}`));
+
+async function validateCaptcha(captchaResponse) {
+  try {
+    const response = await axios.post(
+      'https://challenges.cloudflare.com/turnstile/v0/siteverify',
+      new URLSearchParams({
+        secret: SECRET_KEY,
+        response: captchaResponse
+      })
+    );
+    return response.data.success;
+  } catch (error) {
+    console.error('Captcha validation failed:', error);
+    return false;
+  }
+}
